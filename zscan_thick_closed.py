@@ -154,9 +154,9 @@ def propagate_thick_sample(z_s, n2_val, beam_params, N_slices=200,
         # Order: TPA then SA (or whichever are enabled)
         # ------------------------------------------------------------------
         if use_tpa and beta != 0.0:
-            amp_factor *= _tpa_step(I_m, beta, dL)
-            # Update effective intensity seen by subsequent effects
-            I_m *= (_tpa_step(I_m, beta, dL)) ** 2
+            ratio = _tpa_step(I_m, beta, dL)
+            amp_factor *= ratio
+            I_m *= ratio ** 2
 
         if use_sa and alpha_0 != 0.0:
             amp_factor *= _sa_step(I_m, alpha_0, I_sat, dL)

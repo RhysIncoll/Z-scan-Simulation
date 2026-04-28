@@ -11,6 +11,44 @@ from zscan_model import (
 )
 
 # =========================================================
+# CACHED SIMULATION FUNCTIONS
+# =========================================================
+
+@st.cache_data(show_spinner=False)
+def cached_simulate(n2, beam_key, r_a, beta, alpha_0, I_sat, use_tpa, use_sa):
+    beam_params = dict(zip(
+        ["w0","z0","lam","n0","L","I0","a_corr","d_det"], beam_key
+    ))
+    return simulate_closed_aperture(
+        n2=n2, beam_params=beam_params, r_a=r_a,
+        beta=beta, alpha_0=alpha_0, I_sat=I_sat,
+        use_tpa=use_tpa, use_sa=use_sa
+    )
+
+
+@st.cache_data(show_spinner=False)
+def cached_sensitivity_sweep(beam_key, r_a):
+    beam_params = dict(zip(
+        ["w0","z0","lam","n0","L","I0","a_corr","d_det"], beam_key
+    ))
+    n2_sweep  = np.logspace(-23, -12, 80)
+    tpv_sweep = []
+    for n2_val in n2_sweep:
+        try:
+            _, Tz_tmp, _ = simulate_closed_aperture(
+                n2=n2_val, beam_params=beam_params, r_a=r_a,
+                use_tpa=False, use_sa=False
+            )
+            Tz_tmp  = np.array(Tz_tmp, dtype=float)
+            Tz_tmp  = Tz_tmp[np.isfinite(Tz_tmp)]
+            tpv_val = float(np.max(Tz_tmp) - np.min(Tz_tmp)) if len(Tz_tmp) else 1e-12
+            tpv_val = max(tpv_val, 1e-12)
+        except Exception:
+            tpv_val = 1e-12
+        tpv_sweep.append(tpv_val)
+    return n2_sweep, np.array(tpv_sweep)
+
+# =========================================================
 # GLOBAL PLOT STYLE
 # =========================================================
 
@@ -104,6 +142,10 @@ beam_params, r_a, k, I0 = setup_parameters(
     lam=lam, w0=w0, L=L, S=S, P_peak=P_peak, d_det=d_det
 )
 z0 = beam_params["z0"]
+
+# Hashable key for caching — tuple of beam_params values in fixed order
+beam_key = tuple(beam_params[k] for k in
+    ["w0", "z0", "lam", "n0", "L", "I0", "a_corr", "d_det"])
 
 SETUP_STR = (
     f"λ={lam*1e9:.0f} nm  w0={w0*1e6:.1f} µm  "
@@ -205,15 +247,10 @@ results = []
 
 for mat in st.session_state.materials:
     try:
-        z, Tz, tpv = simulate_closed_aperture(
-            n2          = mat["n2"],
-            beam_params = beam_params,
-            r_a         = r_a,
-            beta        = mat["beta"],
-            alpha_0     = mat["alpha_0"],
-            I_sat       = mat["I_sat"],
-            use_tpa     = enable_tpa,
-            use_sa      = enable_sa,
+        z, Tz, tpv = cached_simulate(
+            n2=mat["n2"], beam_key=beam_key, r_a=r_a,
+            beta=mat["beta"], alpha_0=mat["alpha_0"], I_sat=mat["I_sat"],
+            use_tpa=enable_tpa, use_sa=enable_sa
         )
 
         z  = np.array(z,  dtype=float)
@@ -259,23 +296,10 @@ with tab2:
     if not results:
         st.error("No valid simulation results.")
     else:
-        n2_dphi1  = 1.0 / (k * I0 * L)
-        n2_sweep  = np.logspace(-23, -12, 80)
-        tpv_sweep = []
+        n2_dphi1 = 1.0 / (k * I0 * L)
 
-        for n2_val in n2_sweep:
-            try:
-                _, Tz_tmp, _ = simulate_closed_aperture(
-                    n2=n2_val, beam_params=beam_params, r_a=r_a,
-                    use_tpa=False, use_sa=False
-                )
-                Tz_tmp  = np.array(Tz_tmp, dtype=float)
-                Tz_tmp  = Tz_tmp[np.isfinite(Tz_tmp)]
-                tpv_val = float(np.max(Tz_tmp) - np.min(Tz_tmp)) if len(Tz_tmp) else 1e-12
-                tpv_val = max(tpv_val, 1e-12)
-            except Exception:
-                tpv_val = 1e-12
-            tpv_sweep.append(tpv_val)
+        # Cached sensitivity sweep — only recomputes when beam params change
+        n2_sweep, tpv_sweep = cached_sensitivity_sweep(beam_key, r_a)
 
         toggle_parts = []
         if enable_tpa: toggle_parts.append("TPA on")
@@ -382,7 +406,6 @@ with tab4:
     if not results:
         st.error("No valid results.")
     else:
-        # Validity warnings
         for r in results:
             if r["dphi"] > 1.0:
                 st.warning(
