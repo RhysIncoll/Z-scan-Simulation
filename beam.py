@@ -78,11 +78,8 @@ class GaussianBeam:
         Returns np.inf at z=0 (planar wavefront at focus).
         """
         z = np.atleast_1d(np.asarray(z, dtype=float))
-        R = np.where(
-            np.abs(z) < 1e-20,
-            np.inf,
-            z * (1.0 + (self.z0 / np.where(np.abs(z) < 1e-20, 1.0, z))**2)
-        )
+        with np.errstate(divide='ignore', invalid='ignore'):
+            R = np.where(np.abs(z) < 1e-20, np.inf, z * (1.0 + (self.z0 / z)**2))
         return R if R.size > 1 else float(R)
 
     def _Iz(self, z):

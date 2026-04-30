@@ -100,7 +100,7 @@ LITERATURE = {
         },
         {
             'label':  'CS2\nReference',
-            'n2':      3.40e-14,
+            'n2':      3.20e-18,
             'n0':      1.63,
             'color':  'black',
             'marker': '*',

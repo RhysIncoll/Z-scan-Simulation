@@ -159,7 +159,9 @@ def propagate_thick_sample(z_s, n2_val, beam_params, N_slices=200,
             I_m *= ratio ** 2
 
         if use_sa and alpha_0 != 0.0:
-            amp_factor *= _sa_step(I_m, alpha_0, I_sat, dL)
+            ratio = _sa_step(I_m, alpha_0, I_sat, dL)
+            amp_factor *= ratio
+            I_m *= ratio ** 2
 
         # ------------------------------------------------------------------
         # Kerr lensing — ABCD matrix (unchanged from original)
@@ -185,7 +187,12 @@ def propagate_thick_sample(z_s, n2_val, beam_params, N_slices=200,
         q = apply_abcd(q, M_m)
 
     # Free-space propagation to detector
-    q += d_det
+    M_free = np.array([
+        [1.0, d_det],
+        [0.0, 1.0]
+    ])
+
+    q = apply_abcd(q, M_free)
 
     w_a = w_from_q(q, lam)
     return w_a, amp_factor
@@ -198,7 +205,7 @@ def propagate_thick_sample(z_s, n2_val, beam_params, N_slices=200,
 def aperture_transmittance(r_a_val, w_a_val):
     """Fraction of Gaussian beam power through circular aperture."""
     if np.isnan(w_a_val) or w_a_val <= 0:
-        return 0.0
+        return np.nan
     return 1.0 - np.exp(-2.0 * r_a_val ** 2 / w_a_val ** 2)
 
 
@@ -211,44 +218,87 @@ def T_thick_closed(z_arr, n2_val, beam_params, r_a_val, N_slices=200,
                    use_tpa=False, use_sa=False):
     """
     Normalised closed aperture transmittance T(z) for thick sample.
-
-    Sheik-Bahae 1991 distributed lens + optional TPA/SA per slice.
-
-    Parameters
-    ----------
-    z_arr       : sample centre positions (m)
-    n2_val      : nonlinear refractive index (m^2/W)
-    beam_params : dict of beam/sample parameters
-    r_a_val     : aperture radius (m)
-    N_slices    : distributed lens slices
-    beta        : TPA coefficient (m/W)
-    alpha_0     : SA linear absorption (m^-1)
-    I_sat       : SA saturation intensity (W/m^2)
-    use_tpa     : enable TPA
-    use_sa      : enable SA
-
-    Returns
-    -------
-    T : ndarray, normalised transmittance
     """
+
     T_out = np.empty(len(z_arr))
 
     for i, z_s in enumerate(z_arr):
 
-        # Nonlinear propagation (Kerr + enabled absorptive effects)
-        w_NL,  amp_NL  = propagate_thick_sample(
-            z_s, n2_val, beam_params, N_slices,
-            beta, alpha_0, I_sat, use_tpa, use_sa
+        # -------------------------------------------------------------
+        # Nonlinear case:
+        # Kerr + optional TPA + optional SA
+        # -------------------------------------------------------------
+        w_NL, amp_NL = propagate_thick_sample(
+            z_s,
+            n2_val,
+            beam_params,
+            N_slices,
+            beta,
+            alpha_0,
+            I_sat,
+            use_tpa,
+            use_sa
         )
 
-        # Linear reference — n2=0, no absorption
-        w_lin, amp_lin = propagate_thick_sample(
-            z_s, 0.0, beam_params, N_slices,
-            0.0, 0.0, 1e20, False, False
-        )
+        # -------------------------------------------------------------
+        # Reference case:
+        #
+        # SA sweep:
+        # same alpha0, but NO saturation and NO Kerr
+        #
+        # TPA sweep:
+        # same beta, but NO Kerr
+        #
+        # Pure Kerr:
+        # no absorption, no Kerr
+        # -------------------------------------------------------------
+        if use_sa and alpha_0 > 0:
 
-        P_NL  = aperture_transmittance(r_a_val, w_NL)  * amp_NL  ** 2
-        P_lin = aperture_transmittance(r_a_val, w_lin) * amp_lin ** 2
+            # reference = same linear absorption, but no saturation
+            w_lin, amp_lin = propagate_thick_sample(
+                z_s,
+                0.0,              # no Kerr
+                beam_params,
+                N_slices,
+                0.0,              # no TPA
+                alpha_0,          # keep same alpha_0
+                1e30,            # effectively no saturation
+                False,
+                True
+            )
+        elif use_tpa and beta > 0:
+
+            w_lin, amp_lin = propagate_thick_sample(
+                z_s,
+                0.0,            # no Kerr
+                beam_params,
+                N_slices,
+                beta,           # same beta
+                0.0,
+                1e20,
+                True,
+                False
+            )
+
+        else:
+
+            w_lin, amp_lin = propagate_thick_sample(
+                z_s,
+                0.0,
+                beam_params,
+                N_slices,
+                0.0,
+                0.0,
+                1e20,
+                False,
+                False
+            )
+
+        # -------------------------------------------------------------
+        # Final normalized transmittance
+        # -------------------------------------------------------------
+        P_NL = aperture_transmittance(r_a_val, w_NL) * amp_NL**2
+        P_lin = aperture_transmittance(r_a_val, w_lin) * amp_lin**2
 
         T_out[i] = P_NL / P_lin if P_lin > 1e-30 else 1.0
 
